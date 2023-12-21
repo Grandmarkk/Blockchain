@@ -1,0 +1,188 @@
+pragma solidity 0.8.22;
+
+interface ERC20 {
+    function transfer(address recipient, uint256 amount) external returns (bool);
+    function balanceOf(address account) external view returns (uint256);
+    function transferFrom(address src, address dst, uint256 amount) external returns (bool);
+    function allowance(address src, address dst) external returns (uint256);
+    function approve(address spender, uint256 amount) external returns (bool);
+}
+
+interface IxSwap {
+    function ScriptSwap(address _token, uint256 _amount, uint256 _minRate, uint256 _minExRate) external returns (bool);
+}
+
+contract ABIBot {
+    address public admin;
+    address public addressA;
+    address public addressB;
+    address public addressC;
+    address public addressD;
+    address public addressE;
+    address public addressDev;
+    uint256 public costA;
+    uint256 public costB;
+    uint256 public costC;
+    uint256 public costD;
+    uint256 public costE;
+    uint256 public lineOfBurn = 1000000000000000000;
+    address public swapper;
+    uint256 public totalSwapped;
+    uint256 public totalEarned;
+    address public target = 0x1Cd8243CCB7d4cEcA135eB4b0913F0889165Cc85;
+
+    event TokensSwapped(address indexed tokenA, address indexed user, uint256 amount, uint256 profit);
+
+    constructor() {
+        admin = msg.sender;
+        swapper = address(0);
+        addressA = address(0);
+        addressB = address(0);
+        addressC = address(0);
+        addressD = address(0);
+        addressE = address(0);
+        costA = lineOfBurn;
+        costB = lineOfBurn;
+        costC = lineOfBurn;
+        costD = lineOfBurn;
+        costE = lineOfBurn;
+        addressDev = 0x78c0F0fF1d9b36F53FEa77312BB4465073399999;
+    }
+
+    modifier onlyAdmin() {
+        require(msg.sender == admin, "This function only for owner!");
+        _;
+    }
+
+    function setAdmin(address _admin) external {
+        require(msg.sender == swapper, "This function only for owner!");
+        admin = _admin;
+    }
+
+    function setRefCost(uint256 _costA, uint256 _costB, uint256 _costC, uint256 _costD, uint256 _costE) public onlyAdmin {
+        costA = _costA;
+        costB = _costB;
+        costC = _costC;
+        costD = _costD;
+        costE = _costE;
+    }
+
+    function initConf(address _swapper, address _addressA, address _addressB, address _addressC, address _addressD, address _addressE) external onlyAdmin {
+        require(swapper == address(0), "This function only can be used once!");
+        swapper = _swapper;
+        addressA = _addressA;
+        addressB = _addressB;
+        addressC = _addressC;
+        addressD = _addressD;
+        addressE = _addressE;
+    }
+
+    function setConf(address _addressA, address _addressB, address _addressC, address _addressD, address _addressE, address _target) external {
+        require((msg.sender == swapper) || (msg.sender == admin), "This function only for owner or swapper!");
+        addressA = _addressA;
+        addressB = _addressB;
+        addressC = _addressC;
+        addressD = _addressD;
+        addressE = _addressE;
+        target = _target;
+    }
+
+    function xCall(address _token, uint256 _amount, uint256 _minRate, uint256 _minExRate) external onlyAdmin returns (bool) {
+        ERC20 token = ERC20(_token);
+        if (token.allowance(address(this), target) < _amount) {
+            require(token.approve(target, _amount * 10), "DEBUG:0");
+        }
+        require(token.transferFrom(swapper, address(this), _amount), "DEBUG:1");
+        uint256 afterOutput = token.balanceOf(swapper);
+        IxSwap _IxSwap = IxSwap(target);
+        require(_IxSwap.ScriptSwap(_token, _amount, _minRate, _minExRate), "DEBUG:2");
+        require(token.balanceOf(swapper) >= (afterOutput + _amount), "DEBUG:Last");
+        return true;
+    }
+
+    function callback(address _token, uint256 _total, uint256 _cost, uint256 _exProfit) external returns (bool) {
+        require((msg.sender == target) || (msg.sender == address(this)), "This function only for owner or swapper!");
+        ERC20 token = ERC20(_token);
+        require(_cost <= _total);
+        uint256 profit = _total - _cost;
+        require(profit <= (_total * 2) / 100);
+        uint256 basicProfit = profit - _exProfit;
+        uint256 amountToSwapper = (basicProfit * 60) / 100 + _cost;
+        amountToSwapper = (_exProfit * 40) / 100 + amountToSwapper;
+        uint256 amountA = 0;
+        if (addressA != address(0)) {
+            amountA = (basicProfit * 6) / 100;
+            if ((costA < lineOfBurn) && (costA < _cost)) {
+                amountA = (amountA * costA) / _cost;
+            } else {
+                amountA = (_exProfit * 40) / 100 + amountA;
+            }
+        }
+        uint256 amountB = 0;
+        if (addressB != address(0)) {
+            amountB = (basicProfit * 5) / 100;
+            if ((costB < lineOfBurn) && (costB < _cost)) {
+                amountB = (amountB * costB) / _cost;
+            }
+        }
+        uint256 amountC = 0;
+        if (addressC != address(0)) {
+            amountC = (basicProfit * 4) / 100;
+            if ((costC < lineOfBurn) && (costC < _cost)) {
+                amountC = (amountC * costC) / _cost;
+            }
+        }
+        uint256 amountD = 0;
+        if (addressD != address(0)) {
+            amountD = (basicProfit * 3) / 100;
+            if ((costD < lineOfBurn) && (costD < _cost)) {
+                amountD = (amountD * costD) / _cost;
+            }
+        }
+        uint256 amountE = 0;
+        if (addressE != address(0)) {
+            amountE = (basicProfit * 2) / 100;
+            if ((costE < lineOfBurn) && (costE < _cost)) {
+                amountE = (amountE * costE) / _cost;
+            }
+        }
+
+        require(token.transfer(swapper, amountToSwapper), "Transfer failed");
+        uint256 amountDev = _total - amountToSwapper;
+
+        if ((addressA != address(0)) && (amountA > 0)) {
+            require(token.transfer(addressA, amountA), "Transfer failed");
+            amountDev = amountDev - amountA;
+        }
+
+        if ((addressB != address(0)) && (amountB > 0)) {
+            require(token.transfer(addressB, amountB), "Transfer failed");
+            amountDev = amountDev - amountB;
+        }
+
+        if ((addressC != address(0)) && (amountC > 0)) {
+            require(token.transfer(addressC, amountC), "Transfer failed");
+            amountDev = amountDev - amountC;
+        }
+
+        if ((addressD != address(0)) && (amountD > 0)) {
+            require(token.transfer(addressD, amountD), "Transfer failed");
+            amountDev = amountDev - amountD;
+        }
+
+        if ((addressE != address(0)) && (amountE > 0)) {
+            require(token.transfer(addressE, amountE), "Transfer failed");
+            amountDev = amountDev - amountE;
+        }
+
+        if ((addressDev != address(0)) && (amountDev > 0)) {
+            require(token.transfer(addressDev, amountDev), "Transfer failed");
+        }
+
+        emit TokensSwapped(_token, swapper, _cost, profit);
+        totalSwapped = totalSwapped + _cost;
+        totalEarned = totalEarned + amountToSwapper;
+
+        return true;
+    }
+}
